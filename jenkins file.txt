@@ -1,0 +1,113 @@
+if(env.BRANCH_NAME != "master"){
+    properties([
+        parameters([
+            choice(choices: 'alpha\njon\ndaenerys\ntyrion', description: 'Which environment do you want to deploy the branch in?', name: 'environment')
+        ])
+    ])
+}
+else{
+    properties([
+        parameters([
+            choice(choices: 'master', description: 'Which environment do you want to deploy the branch in?', name: 'environment')
+        ])
+    ])
+}
+node {
+  def project = 'testbook-app'
+  def appName = 'web-core'
+  def feSvcName = "${appName}-frontend"
+  def imageTag = "gcr.io/${project}/${appName}:${env.BRANCH_NAME}"
+  def containerTag = "alpha-web-core"
+
+  checkout scm
+  stage 'Get Config'
+  sh ("gsutil cp gs://tb_configs/web-core/env.json .")
+
+  stage 'Build image'
+  switch (env.BRANCH_NAME) {
+    case "master":
+        sh("docker build -t ${imageTag} --build-arg ENVIRONMENT=production .")
+  	sh("docker container prune -f && docker image prune -f")
+  	sh("docker run -d --rm --name ${containerTag} ${imageTag}")
+	sh("docker cp ${containerTag}:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+  	sh("docker stop ${containerTag}")
+
+        break
+    default:
+        imageTag = "gcr.io/${project}/${appName}:${env.environment}"
+        switch (env.environment) {
+            case "alpha":
+                sh("docker build -t ${imageTag} --build-arg ENVIRONMENT=alpha .")
+                sh("docker container prune -f && docker image prune -f")
+                sh("docker run -d --rm --name ${containerTag} ${imageTag}")
+                sh("docker cp ${containerTag}:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+                sh("docker stop ${containerTag}")
+            break
+
+            case "jon":
+                sh("docker build -t gcr.io/testbook-app/web-core:jon --build-arg ENVIRONMENT=jon .")
+            sh("docker container prune -f && docker image prune -f")
+            sh("docker run -d --rm --name jon-web-core ${imageTag}")
+            sh("docker cp jon-web-core:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+            sh("docker stop jon-web-core")
+            break
+
+            case "tyrion":
+                sh("docker build -t gcr.io/testbook-app/web-core:tyrion --build-arg ENVIRONMENT=tyrion .")
+            sh("docker container prune -f && docker image prune -f")
+            sh("docker run -d --rm --name tyrion-web-core ${imageTag}")
+            sh("docker cp tyrion-web-core:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+            sh("docker stop tyrion-web-core")
+            break
+
+            case "daenerys":
+                sh("docker build -t gcr.io/testbook-app/web-core:daenerys --build-arg ENVIRONMENT=daenerys .")
+            sh("docker container prune -f && docker image prune -f")
+            sh("docker run -d --rm --name daenerys-web-core ${imageTag}")
+            sh("docker cp daenerys-web-core:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+            sh("docker stop daenerys-web-core")
+                break
+        }
+
+  }
+  //sh("docker container prune -f && docker image prune -f")
+  //sh("docker run -d --rm --name ${containerTag} ${imageTag}")
+  //sh("docker cp ${containerTag}:/var/www/testbook/repos/web-core/node_modules/. node_modules")
+  //sh("docker stop ${containerTag}")
+
+  stage 'Run Tests'
+  sh("echo TODO: tests")
+
+  stage 'Push image to registry'
+  sh("gcloud docker -- push ${imageTag}")
+
+  stage "Deploy"
+  switch (env.BRANCH_NAME) {
+    // Roll out to production
+    case "master":
+        sh("gsutil cp startup.sh gs://tb_configs/web-core/startup.sh")
+        // max-surge is not recognized in current gcloud beta command, so use it later
+        // sh("gcloud beta compute instance-groups managed rolling-action restart prod-web-core-group --max-unavailable 1 --max-surge 1")
+        sh("gcloud beta compute instance-groups managed rolling-action replace prod-web-core-group --max-unavailable 1 --zone asia-south1-c")
+        break
+    // Roll out to alpha environment
+  default:
+    switch(env.environment) {
+        case "jon":
+            sh("gcloud compute ssh jenkins@ocrm-2 --zone asia-south1-c --command \" sudo su; gcloud docker -- pull ${imageTag} && docker stop jon-web-core && docker rm jon-web-core && docker run -d --restart always -p 4444:80 --name jon-web-core ${imageTag} && docker container prune -f && docker image prune -f \" ")
+            break
+
+        case "tyrion":
+          sh("gcloud compute ssh jenkins@ocrm-2 --zone asia-south1-c --command \" sudo su; gcloud docker -- pull ${imageTag} && docker stop tyrion-web-core && docker rm tyrion-web-core && docker run -d --restart always -p 7777:80 --name tyrion-web-core ${imageTag} && docker container prune -f && docker image prune -f \" ")
+          break
+
+        case "daenerys":
+          sh("gcloud compute ssh jenkins@ocrm-2 --zone asia-south1-c --command \" sudo su; gcloud docker -- pull ${imageTag} && docker stop daenerys-web-core && docker rm daenerys-web-core && docker run -d --restart always -p 9999:80 --name daenerys-web-core ${imageTag} && docker container prune -f && docker image prune -f \" ")
+          break
+
+        default:
+           sh("gcloud compute ssh jenkins@ocrm-2 --zone asia-south1-c --command \" sudo su; gcloud docker -- pull ${imageTag} && docker stop ${containerTag} && docker rm ${containerTag} && docker run -d --restart always -p 8888:80 --name ${containerTag} ${imageTag} && docker container prune -f && docker image prune -f \" ")
+           break
+    }
+  }
+}

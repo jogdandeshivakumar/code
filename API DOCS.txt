@@ -1,0 +1,62 @@
+server {
+    listen [::]:80; ## listen for ipv4; this line is default and implied
+
+    # Make site accessible from http://localhost/
+    server_name www.alpha.testbook.com;
+    rewrite ^ $scheme://testbook.com$request_uri? permanent;
+}
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name alpha.testbook.com;
+
+    root /var/www/testbook/repos/web-core/build/alpha/site;
+    index router.php;
+#   index maintenance.html;
+
+    charset utf-8;
+
+    error_page 404 /404.html;
+    error_page 500 502 503 504 = /50x.html;
+
+    access_log /var/log/nginx/access.log;
+    error_log  /var/log/nginx/error.log error;
+
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+    }
+    location = /robots.txt {
+        allow all;
+        log_not_found off;
+        access_log off;
+    }
+    location / {
+        #workaround for google lb
+        if ($http_x_forwarded_proto = "http") {
+            return 301 https://$host$request_uri;
+        }
+        if ($host = "www.alpha.testbook.com"){
+            return 301 https://alpha.testbook.com$request_uri;
+        }
+
+        # First attempt to serve request as file, then
+        # as directory, then fall back to displaying a 404.
+        try_files $uri $uri/ /router.php?$args;
+#       try_files $uri $uri/ /maintenance.html;
+    }
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/var/run/php/php7.0-fpm.sock;
+        include snippets/fastcgi-php.conf;
+   }
+   location ^~ /js {
+        add_header  Content-Encoding  gzip;
+        gzip off;
+   }
+   location ^~ /assets/style {
+        add_header  Content-Encoding  gzip;
+        gzip off;
+   }
+}

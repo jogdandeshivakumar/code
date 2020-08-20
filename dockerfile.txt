@@ -1,0 +1,107 @@
+FROM phusion/baseimage:latest
+ARG ENVIRONMENT=development
+ENV ENVIRONMENT=$ENVIRONMENT
+ENV TERM=xterm \
+    REPO_ROOT="/var/www/testbook/repos/web-core"
+
+RUN \
+    rm -rf /etc/service/sshd /etc/my_init.d/00_regen_ssh_host_keys.sh && \
+    locale-gen en_US.UTF-8 && \
+    export LANG=en_US.UTF-8 && \
+    apt-get update && \
+    apt-get dist-upgrade -y && \
+    apt-get install -y vim wget curl nano zip unzip && \
+    apt-get install -y iputils-ping netcat && \
+    # install nginx
+    apt-get install -y ca-certificates nginx && \
+    # install php7.0-fpm
+    apt-get install -y php7.0-fpm php7.0-curl php7.0-dev
+
+# replace shell with bash so we can source files
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+
+# nvm environment variables
+ENV NVM_DIR /usr/local/nvm
+ENV NODE_VERSION 8.11.4
+
+# install nvm
+# https://github.com/creationix/nvm#install-script
+RUN curl --silent -o- https://raw.githubusercontent.com/creationix/nvm/v0.31.2/install.sh | bash
+
+# install node and npm
+RUN \
+    source $NVM_DIR/nvm.sh && \
+    nvm install $NODE_VERSION && \
+    nvm alias default $NODE_VERSION && \
+    nvm use default && \
+    node -v && \
+    npm -v
+
+# add node and npm to path so the commands are available
+ENV NODE_PATH $NVM_DIR/v$NODE_VERSION/lib/node_modules
+ENV PATH $NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
+
+RUN \
+    npm -version && \
+    npm install -g gulp && \
+    gulp -version && \
+    apt-get install -y git
+
+RUN apt-get clean && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# configure nginx
+RUN rm /etc/nginx/sites-enabled/default
+COPY docker/services/nginx/configs/sites-enabled/${ENVIRONMENT}.testbook.com /etc/nginx/sites-enabled/
+#COPY docker/services/nginx/password/${ENVIRONMENT}.passwd /etc/nginx/.htpasswd
+
+COPY docker/services/nginx/runit/nginx /etc/service/nginx/run
+RUN chmod +x /etc/service/nginx/run
+
+# configure php
+COPY docker/services/php/configs/fpm/php-fpm.conf /etc/php/7.0/fpm/php-fpm.conf
+COPY docker/services/php/configs/fpm/${ENVIRONMENT}.php.ini /etc/php/7.0/fpm/php.ini
+COPY docker/services/php/configs/fpm/pool.d/www.conf /etc/php/7.0/fpm/pool.d/www.conf
+
+COPY docker/services/php/runit/php /etc/service/php/run
+RUN chmod +x /etc/service/php/run
+# create path for pid storage
+RUN mkdir -p /run/php
+RUN mkdir -p /var/log/php
+
+#Install php-redis client
+RUN cd /tmp && \
+    git clone https://github.com/phpredis/phpredis.git && \
+    cd phpredis && \
+    phpize && \
+    ./configure && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf phpredis
+#    pecl install redis
+
+RUN touch /etc/php/7.0/mods-available/redis.ini && \
+    echo extension=redis.so > /etc/php/7.0/mods-available/redis.ini && \
+    ln -s  /etc/php/7.0/mods-available/redis.ini /etc/php/7.0/fpm/conf.d/20-redis.ini && \
+    ln -s  /etc/php/7.0/mods-available/redis.ini  /etc/php/7.0/cli/conf.d/20-redis.ini && \
+    service php7.0-fpm restart
+
+
+# configure gulp for development
+COPY docker/services/web-core/runit/gulp /etc/service/gulp/run
+RUN chmod +x /etc/service/gulp/run
+
+# create one time build for production/alpha, this results in start and serve containers without any delay
+COPY . ${REPO_ROOT}
+RUN mkdir -p /var/log/testbook.com
+COPY docker/services/web-core/deploy_build.sh /deploy_build.sh
+RUN chmod +x /deploy_build.sh
+RUN /deploy_build.sh
+
+WORKDIR ${REPO_ROOT}
+
+EXPOSE 80 443
+
+CMD ["/sbin/my_init"]

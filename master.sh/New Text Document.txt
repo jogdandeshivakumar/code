@@ -1,0 +1,61 @@
+#!/bin/bash
+
+#do not change this as it is used by startup scripts in the autoscaler
+SLAVESCRIPT=slave.sh
+SHUTDOWNSCRIPT=shutdown.sh
+. ./$SLAVESCRIPT includemode
+
+function restartServer() {
+    echo "Starting server"
+    chmod +x $BINARY
+    mkdir logs && touch logs/server.log
+	jq '.CONFIG[.CURRENT_ENV].PORT' env.json | xargs -I '{}' lsof -i :{} | awk 'NR>1{print $2}' | xargs kill -9
+	./$BINARY -envPath $ENV >> logs/server.log 2>&1 & disown
+	chmod +x $CLOUD_FOLDER/difficultQuestions.R
+}
+
+echo -n "Should [production/general]: "
+read ROLE
+
+#Building
+source $HOME/.bashrc
+gvm use go1.11.1
+rm temp_newtb
+go build -o temp_newtb
+if [ -f temp_newtb ]; then
+    mv temp_newtb $BINARY
+else
+    echo "Build Failed!!"
+    exit
+fi
+echo "Build Successful. Check logs if server failed to start."
+
+if [ "$ROLE" = "production" ] || [ "$ROLE" = "p" ]; then
+    gsutil -m cp $ENV gs://$BUCKET_LOCATION/$ENV
+    gsutil -m cp $BINARY gs://$BUCKET_LOCATION/$BINARY
+    gsutil -m cp -r $CLOUD_FOLDER gs://$BUCKET_LOCATION
+    gsutil -m cp $SLAVESCRIPT gs://$BUCKET_LOCATION
+    gsutil -m cp $SHUTDOWNSCRIPT gs://$BUCKET_LOCATION
+    echo "Upload finished"
+elif [ "$ROLE" = "general" ] || [ "$ROLE" = "g" ]; then
+    restartServer
+fi
+
+echo "Build deployed successfully. Building crons now..."
+rm cron
+go build -o cron utility/cron/cron.go utility/cron/cron_functions.go
+if [ -f cron ]; then
+    echo "Cron Build Successful"
+else
+    echo "Cron Build Failed. Please fix errors and continue. Exiting."
+    exit
+fi
+rm cron_adminstats
+go build -o cron_adminstats utility/cron/cron.go utility/cron/cron_functions.go
+if [ -f cron_adminstats ]; then
+    echo "Cron Build for admin Successful"
+else
+    echo "Cron Build for admin Failed. Please fix errors and continue. Exiting."
+    exit
+fi
+

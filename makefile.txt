@@ -1,0 +1,76 @@
+COMPOSE_PROJECT_NAME='web-core'
+
+BIN_DOCKER='docker'
+BIN_DOCKER_COMPOSE='docker-compose'
+
+COMPOSE_FILE_DEV='dc-dev.yml'
+COMPOSE_FILE_ALPHA='dc-alpha.yml'
+COMPOSE_FILE_PROD='dc-prod.yml'
+
+CONTAINER_DEV='dev-web-core'
+CONTAINER_ALPHA='alpha-web-core'
+CONTAINER_PROD='prod-web-core'
+
+NETWORK_REVERSE_PROXY='reverse-proxy'
+
+.PHONY: list build
+list:
+	@$(MAKE) -pRrq -f $(lastword $(MAKEFILE_LIST)) : 2>/dev/null | awk -v RS= -F: '/^# File/,/^# Finished Make data base/ {if ($$1 !~ "^[#.]") {print $$1}}' | sort | egrep -v -e '^[^[:alnum:]]' -e '^$@$$'
+
+clear_all: clear_container clear_images clear_networks
+
+clear_container:
+	$(BIN_DOCKER) stop `$(BIN_DOCKER) ps -a -q` && $(BIN_DOCKER) rm `$(BIN_DOCKER) ps -a -q`
+
+clear_images:
+	$(BIN_DOCKER) rmi -f `$(BIN_DOCKER) images -q`
+
+create_networks:
+	$(eval RET=$(shell $(BIN_DOCKER) network ls | awk '$$2 ==  "$(NETWORK_REVERSE_PROXY)"' | wc -l))
+	if [ $(RET) -eq 1 ]; then \
+		echo "Network $(NETWORK_REVERSE_PROXY) already exists."; \
+	else \
+		echo "Creating network $(NETWORK_REVERSE_PROXY)..."; \
+		$(BIN_DOCKER) network create --driver bridge $(NETWORK_REVERSE_PROXY); \
+	fi;
+
+clear_networks:
+	$(BIN_DOCKER) network rm $(NETWORK_REVERSE_PROXY)
+
+up_prereq: create_networks
+
+up_dev: up_prereq
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_DEV) up -d --build
+
+up_alpha: up_prereq
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_ALPHA) up -d
+
+up_prod: up_prereq
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_PROD) up -d
+
+restart_dev:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_DEV) restart
+
+restart_alpha:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_ALPHA) restart
+
+restart_prod:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_PROD) restart
+
+down_dev:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_DEV) down
+
+down_alpha:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_ALPHA) down
+
+down_prod:
+	$(BIN_DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f $(COMPOSE_FILE_PROD) down
+
+connect_dev:
+	$(BIN_DOCKER) exec -it $(CONTAINER_DEV) /bin/bash
+
+connect_alpha:
+	$(BIN_DOCKER) exec -it $(CONTAINER_ALPHA) /bin/bash
+
+connect_prod:
+	$(BIN_DOCKER) exec -it $(CONTAINER_PROD) /bin/bash

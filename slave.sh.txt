@@ -1,0 +1,104 @@
+#!/bin/bash
+
+BUCKET_LOCATION=tb_configs/newtb
+BINARY=newtb
+CLOUD_FOLDER=cloud
+ENV=env.json
+SLAVEDIR=/var/www/newtb
+GCE_JSON=cache.json
+ACCESS_LOG=logs/access/access.log
+SLAVESCRIPT=slave.sh
+
+function installSupervisor() {
+    cat << EOF > /etc/supervisor/conf.d/newtb.conf
+[program:newtb]
+command=$SLAVEDIR/$BINARY -envPath $ENV
+directory=$SLAVEDIR
+autostart=true
+autorestart=true
+startretries=5
+redirect_stderr=true
+stdout_logfile=$SLAVEDIR/logs/server.log
+EOF
+     mkdir logs && touch logs/server.log
+}
+
+function installFluentdJessie() {
+    cat << EOF > /etc/td-agent/td-agent.conf
+<source>
+  @type tail
+  format /^(?<host>[^ ]*(?:,\s+[^ ]+)*) [^ ]* (?<user>[^ ]*) \[(?<timeUnix>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^ ]*) +\S*)?" (?<status>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")? "(?<client>[^ ,]*),?(?<version>[^ ]*)" (?<etime>\d+\.\d{4}?)$/
+  path $SLAVEDIR/$ACCESS_LOG
+  tag newtb.access
+  pos_file /var/log/td-agent/newtb_access.pos
+</source>
+
+<filter newtb.access>
+  @type record_transformer
+  <record>
+    hostname \${hostname}
+  </record>
+</filter>
+
+<match newtb.access>
+  @type bigquery
+  auth_method json_key
+  json_key $SLAVEDIR/$CLOUD_FOLDER/$GCE_JSON
+
+  project "testbook-app"
+  dataset logs
+  tables newtb_access_partition
+
+  fetch_schema true
+</match>
+
+<source>
+  @type tail
+  format /^"(?<uid>\S*)" (?<host>[^ ]*(?:,\s+[^ ]+)*) \[(?<timeUnix>[^\]]*)\] (?<method>\S+) (?<url>\S+) (?<status>\d+) (?<respSize>\d+) \[{\((?<headers>.*?)\)}\] \[{\((?<body>.*?)\)}\]$/
+  path $SLAVEDIR/logs/dump.log
+  tag newtb.dump
+  pos_file /var/log/td-agent/newtb_dump.pos
+</source>
+
+<match newtb.dump>
+  @type bigquery
+  auth_method json_key
+  json_key $SLAVEDIR/$CLOUD_FOLDER/$GCE_JSON
+
+  project "testbook-app"
+  dataset logs
+  tables newtb_dump_partition
+
+  fetch_schema true
+</match>
+
+EOF
+    /etc/init.d/td-agent restart
+}
+
+if [ "$1" == "includemode" ]; then
+    return
+fi
+
+mkdir -p $SLAVEDIR
+cd $SLAVEDIR
+mkdir 'analytics'
+echo "Copying"
+rm $BINARY
+gsutil -m cp gs://$BUCKET_LOCATION/$ENV ./
+gsutil -m cp gs://$BUCKET_LOCATION/$BINARY ./
+chmod +x ./$BINARY
+gsutil -m cp gs://$BUCKET_LOCATION/$SLAVESCRIPT ./
+chmod +x ./$SLAVESCRIPT
+gsutil -m cp -r gs://$BUCKET_LOCATION/$CLOUD_FOLDER ./
+sed -i 's@__CLOUD_DIR__@'$PWD/$CLOUD_FOLDER'@g' $ENV
+
+echo "Installing fluentd config";
+installFluentdJessie
+
+echo "Installing supervisord config";
+installSupervisor
+
+supervisorctl reread
+supervisorctl update
+supervisorctl reload

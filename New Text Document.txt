@@ -1,0 +1,52 @@
+README
+What is this repository for?
+This repo holds the source code of Testbook website's front end
+Version: 1.1.1
+Changelog: CHANGELOG.md
+Quick Start
+Copy env.json.sample to env.json
+Install docker
+Run make up_dev command to start running you dev environment with default port: 80
+Add 127.0.0.1 local.testbook.com as an entry to /etc/hosts
+Visit local.testbook.com in your favorite browser
+Get Started
+make list               lists all available make target commands
+
+make up_dev             start project in dev environment
+make up_alpha           start project in alpha environment
+make up_prod            start project in production environment
+
+make connect_dev        connect to core dev container (nodejs, gulpjs, bower, npm, etc)
+make connect_alpha      connect to core alpha container
+make connect_prod       connect to core production container
+
+make down_dev           stop running containers in dev environment
+make down_alpha         stop running containers in alpha environment
+make down_prod          stop running containers in production environment
+
+make restart_dev        restart dev containers
+make restart_alpha      restart alpha containers
+make restart_prod       restart production containers
+
+make clear_all          removes all images, networks and containers
+make clear_containers   stops and remove all containers
+make clear_images       remove all images
+make clear_networks     remove all networks created by this makefile
+Dependencies
+This is just for informative purpose. You dont need to worry, docker is taking care of everything. nginx php-fpm * php-curl nodejs npm * gulp * bower
+
+If you still are curious then dig into Dockerfile of various services to know about exact detail such as dependency version etc.
+
+Troubleshooting/Known Issues
+Sometimes node is not properly configured, use command ln -s /usr/bin/nodejs /usr/bin/node to do the same. Check here-
+Error: watch ENOSPC -- To increase number of files to be watch. echo fs.inotify.max_user_watches=582222 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+Contribution Guidelines
+Create a new branch and a PR for each new feature simultaneously
+Do update CHANGELOG.md - Learn Markdown
+Get your code reviewed and approved before merging it into alpha branch
+You should only commit the source code to this repo. Content in node_modules, bower_components and build should be ignored.
+All third party dependencies should be handled via bower until we make custom changes to them.
+cdn-data.json is the file referred by gulp during the production build to setup the cdn's of all the devepenencies installed via bower. Do mention the CDN for your dependency if any.
+Flag notifications
+Flag notifications
+Flag notifications

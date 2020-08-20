@@ -1,0 +1,98 @@
+#!/usr/bin/Rscript
+
+library("ltm") #package for variable modeling
+library("mongolite") #package for connecting to mongo
+
+# Get mongo and testId from command line arguments
+args <- commandArgs(trailingOnly = TRUE)
+MONGO_HOST = args[1]
+MONGO_USER = args[2]
+MONGO_PASS = args[3]
+TEST_ID = args[4]
+MONGO_DB = args[5]
+MONG_URI = sprintf("mongodb://%s:%s@%s/%s", MONGO_USER, MONGO_PASS, MONGO_HOST, MONGO_DB)
+
+# Fetch question list from mongo
+tests <- mongo(db = "tb_dev", collection = "tests", url = MONG_URI)
+questions_query = sprintf('{"_id": {"$oid": "%s"}}', TEST_ID)
+questions = tests$find(query = questions_query, fields = '{"ques.detail._id": true}')
+ques_df = questions[2][[1]]
+ques_list = ques_df[[1]]
+
+qidList <- c()
+for (row in 1:nrow(ques_list)) {
+  qidList[row] <- ques_list[row, ][1][["_id"]]
+}
+names(qidList) <- qidList
+qCount = length(qidList)
+
+# Fetch student responses from mongo
+test_summary <- mongo(db = "tb_dev", collection = "test_summary", url = MONG_URI)
+summary_query = sprintf('{"tid": {"$oid": "%s"}, "status": "finished"}', TEST_ID)
+student_responese = test_summary$find(query = summary_query, fields = '{"resp.status":1, "resp.qid":1, "sid":1}')
+
+trickyQs <- qidList
+for (name in names(trickyQs)) {
+  trickyQs[[name]] = 0
+}
+class(trickyQs) = "numeric"
+student_question_rw = matrix(ncol=qCount)
+
+# Use student responses to calculate Tricky Questions
+
+if (is.null(nrow(student_responese)) || nrow(student_responese) == 0)
+  quit()
+
+for (row in 1:nrow(student_responese)) {
+  responses = student_responese[row, ][["resp"]][[1]]
+  sid = student_responese[row, ][["sid"]]
+  if (is.null(nrow(responses)) || nrow(responses) == 0)
+    next
+  qL <- c()
+  sL <- c()
+
+  for (i in 1:nrow(responses)) {
+    qL[i] <- responses[i, ][["qid"]]
+    sL[i] <- responses[i, ][["status"]]
+  }
+  names(sL) <- qL
+  qs <- qidList
+  for (name in names(qs)) {
+    trick <- 0
+    temp <- 0
+    if (!(name %in% names(sL))) {
+      temp <- NA
+    }
+    else if (!is.na(name) && sL[[name]] == "correct")
+    temp <- 1
+    else if (!is.na(name) && sL[[name]] == "incorrect")
+    trick <- 5
+    else #skipped
+    trick <- 1
+    if (!is.na(name)) {
+      qs[[name]] = temp
+      trickyQs[[name]] = trickyQs[[name]] + trick
+    }
+  }
+  student_question_rw <- rbind(student_question_rw, qs)
+}
+class(student_question_rw)="numeric"
+
+# Calculate Difficult Questions
+
+ltm_fit3=ltm(student_question_rw~z1)
+probabilities_fit3=coef(ltm_fit3, prob = TRUE, order = TRUE)
+probabilities_fit3 = probabilities_fit3[order(probabilities_fit3[,3], decreasing=F), ]
+
+# Update Tricky Questions and Difficult Questions in mongo
+
+trickyQs = trickyQs[order(-trickyQs)]
+difficultQuestions = rownames(probabilities_fit3)
+test_analysis <- mongo(db = "tb_dev", collection = "test_analysis", url = MONG_URI)
+analysis_query = sprintf('{"tid": {"$oid": "%s"}}', TEST_ID)
+difficultQuestions_csv = paste('"',as.character(difficultQuestions),'"',collapse=", ",sep="")
+trickyQs_csv = paste('"',as.character(names(trickyQs)),'"',collapse=", ",sep="")
+analysis_update_query = sprintf('{"$set": {"difficultQuestions": [%s], "trickyQuestions": [%s]}}', difficultQuestions_csv, trickyQs_csv)
+test_analysis$update(analysis_query, analysis_update_query)
+
+
